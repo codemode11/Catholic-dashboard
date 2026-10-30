@@ -1,0 +1,6 @@
+{
+  "name": "Ordo & Lectio — Catholic Daily Website",
+  "description": "A daily Catholic liturgical website featuring the Roman Calendar, Mass readings, Gospel commentary and homily, Saint of the Day, 30-minute Scripture reading stopwatch, prayer checklist, canonical prayer alarms, indulgences, Catholic prophecies, Magisterium AI news, curated articles from Word on Fire, Aleteia, and Sign.org, spiritual notes, weather, and Bible flashcards.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
