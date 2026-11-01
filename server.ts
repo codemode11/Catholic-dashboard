@@ -1,4 +1,5 @@
 import express from 'express';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
@@ -26,7 +27,7 @@ function getGenAIClient() {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json());
 
@@ -37,7 +38,8 @@ async function startServer() {
 
     const ai = getGenAIClient();
     if (!ai) {
-      res.status(503).json({
+      res.status(200).json({
+        fallback: true,
         error: 'Server Gemini API key not configured. Using built-in Roman Ordo database.',
       });
       return;
@@ -157,7 +159,8 @@ async function startServer() {
       res.json(parsed);
     } catch (error: any) {
       console.error('Error generating daily liturgy:', error);
-      res.status(500).json({
+      res.status(200).json({
+        fallback: true,
         error: error?.message || 'Failed to generate daily liturgy from Gemini API.',
       });
     }
@@ -173,7 +176,8 @@ async function startServer() {
 
     const ai = getGenAIClient();
     if (!ai) {
-      res.status(503).json({
+      res.status(200).json({
+        fallback: true,
         error: 'Server Gemini API key not configured.',
       });
       return;
@@ -212,13 +216,17 @@ async function startServer() {
       res.json(parsed);
     } catch (error: any) {
       console.error('Error in Magisterium query:', error);
-      res.status(500).json({
+      res.status(200).json({
+        fallback: true,
         error: error?.message || 'Failed to complete Magisterium AI query.',
       });
     }
   });
 
-  if (process.env.NODE_ENV !== 'production') {
+  const distPath = path.join(__dirname, 'dist');
+  const hasBuiltDist = fs.existsSync(path.join(distPath, 'index.html'));
+
+  if (process.env.NODE_ENV !== 'production' || !hasBuiltDist) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -226,7 +234,6 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(__dirname, 'dist');
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));

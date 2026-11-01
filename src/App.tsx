@@ -49,6 +49,7 @@ import {
   CatholicArticle,
 } from './data/liturgicalData';
 import { playMonasteryBellChime } from './utils/chime';
+import { CommunionOfSaintsArtwork } from './components/CommunionOfSaintsArtwork';
 
 interface SpiritualNote {
   id: string;
@@ -301,8 +302,104 @@ export default function App() {
     const totalSeconds = Math.floor(ms / 1000);
     const mins = Math.floor(totalSeconds / 60);
     const secs = totalSeconds % 60;
-    const tenths = Math.floor((ms % 1000) / 100);
-    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${tenths}`;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
+
+  // Update browser tab & Windows Taskbar button title live while timing
+  useEffect(() => {
+    if (stopwatchMs > 0 || isStopwatchRunning) {
+      const prefix = isStopwatchRunning ? '▶' : '⏸';
+      const status = stopwatchMs >= PLENARY_TARGET_SECONDS * 1000 ? '✓ 30m Plenary' : '30:00 Goal';
+      document.title = `${prefix} ${formatStopwatch(stopwatchMs)} (${status}) — Ordo & Lectio`;
+    } else {
+      document.title = 'Ordo & Lectio — Catholic Daily Website';
+    }
+  }, [stopwatchMs, isStopwatchRunning, PLENARY_TARGET_SECONDS]);
+
+  const [stoppedDateLabel, setStoppedDateLabel] = useState<string | null>(null);
+  const [isFloatingMiniOpen, setIsFloatingMiniOpen] = useState<boolean>(false);
+  const [isFloatingMiniMinimized, setIsFloatingMiniMinimized] = useState<boolean>(false);
+  const [floatingMiniPos, setFloatingMiniPos] = useState<{ x: number; y: number } | null>(null);
+  const [isDraggingMini, setIsDraggingMini] = useState<boolean>(false);
+  const floatingMiniRef = useRef<HTMLElement | null>(null);
+  const dragOffsetRef = useRef<{ offsetX: number; offsetY: number; width: number; height: number } | null>(null);
+
+  const handleToggleStopwatch = () => {
+    if (isStopwatchRunning) {
+      const dateStr = new Date().toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      });
+      setStoppedDateLabel(dateStr);
+      setIsStopwatchRunning(false);
+    } else {
+      setIsStopwatchRunning(true);
+    }
+  };
+
+  const handleResetStopwatch = () => {
+    setIsStopwatchRunning(false);
+    setStopwatchMs(0);
+    setChimePlayedFor30Min(false);
+    setStoppedDateLabel(null);
+  };
+
+  // Immediately exit any legacy <video> Picture-in-Picture player so the browser never shows a center pause button or Live Caption overlay
+  useEffect(() => {
+    if (document.pictureInPictureElement) {
+      document.exitPictureInPicture().catch(() => {});
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isDraggingMini) return;
+
+    const handlePointerMove = (e: PointerEvent) => {
+      if (!dragOffsetRef.current) return;
+      const { offsetX, offsetY, width, height } = dragOffsetRef.current;
+      const maxX = Math.max(0, window.innerWidth - width);
+      const maxY = Math.max(0, window.innerHeight - height);
+      const nextX = Math.min(maxX, Math.max(0, e.clientX - offsetX));
+      const nextY = Math.min(maxY, Math.max(0, e.clientY - offsetY));
+      setFloatingMiniPos({ x: nextX, y: nextY });
+    };
+
+    const handlePointerUp = () => {
+      setIsDraggingMini(false);
+      dragOffsetRef.current = null;
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [isDraggingMini]);
+
+  const handleMiniTitlebarPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest('button, a')) return;
+    const el = floatingMiniRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    dragOffsetRef.current = {
+      offsetX: e.clientX - rect.left,
+      offsetY: e.clientY - rect.top,
+      width: rect.width,
+      height: rect.height,
+    };
+    setFloatingMiniPos({ x: rect.left, y: rect.top });
+    setIsDraggingMini(true);
+  };
+
+  const toggleFloatingTaskbarStopwatch = () => {
+    if (isFloatingMiniOpen) {
+      setIsFloatingMiniOpen(false);
+      return;
+    }
+    setIsFloatingMiniOpen(true);
+    setIsFloatingMiniMinimized(false);
   };
 
   const logCurrentScriptureSession = () => {
@@ -317,9 +414,7 @@ export default function App() {
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
     setReadingSessions((prev) => [newSession, ...prev]);
-    setIsStopwatchRunning(false);
-    setStopwatchMs(0);
-    setChimePlayedFor30Min(false);
+    handleResetStopwatch();
   };
 
   // Total Scripture minutes logged for selected date
@@ -482,6 +577,7 @@ export default function App() {
       });
       if (!response.ok) throw new Error('Fallback to curated synthesis');
       const data = await response.json();
+      if (data.fallback || !data.answer) throw new Error('Fallback to curated synthesis');
       setMagisteriumCustomResult(data);
     } catch {
       setMagisteriumCustomResult({
@@ -655,6 +751,9 @@ export default function App() {
         throw new Error('Using built-in Roman Ordo database');
       }
       const data = await response.json();
+      if (data.fallback || !data.readings) {
+        throw new Error('Using built-in Roman Ordo database');
+      }
       setAiLiturgicalCache((prev) => ({
         ...prev,
         [selectedDateIso]: data,
@@ -753,7 +852,7 @@ export default function App() {
             href="#scripture"
             className="hover:text-[#9A3412] hover:underline underline-offset-4 transition-colors whitespace-nowrap shrink-0"
           >
-            Scripture Timer
+            Scripture Study Stopwatch
           </a>
           <a
             href="#prayers"
@@ -976,6 +1075,9 @@ export default function App() {
             </div>
           </div>
         </section>
+
+        {/* HORIZONTAL SACRED ALTARPIECE: THE COMMUNION OF SAINTS */}
+        <CommunionOfSaintsArtwork />
 
         {/* SECTION 1: MASS READINGS, BIBLE COMMENTARY ON THE GOSPEL & HOMILY + CATHOLIC CALENDAR & WEATHER */}
         <section id="liturgy" className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
@@ -1306,9 +1408,9 @@ export default function App() {
               <div className="flex items-baseline justify-between bg-[#F4EFE6] border border-stone-300 p-4">
                 <div>
                   <div className="font-mono-tabular text-3xl font-bold text-stone-900">
-                    {weatherData.tempF}°F{' '}
+                    {weatherData.tempC}°C{' '}
                     <span className="text-base font-normal text-stone-600">
-                      ({weatherData.tempC}°C)
+                      ({weatherData.tempF}°F)
                     </span>
                   </div>
                   <div className="text-xs text-stone-600 mt-1">
@@ -1317,8 +1419,7 @@ export default function App() {
                 </div>
                 <div className="text-right font-mono-tabular text-xs text-stone-600 space-y-1">
                   <div>
-                    H: {Math.round((weatherData.highC * 9) / 5 + 32)}°F · L:{' '}
-                    {Math.round((weatherData.lowC * 9) / 5 + 32)}°F
+                    H: {weatherData.highC}°C · L: {weatherData.lowC}°C
                   </div>
                   <div className="flex items-center justify-end gap-1">
                     <Wind className="w-3.5 h-3.5" /> {weatherData.windKmh} km/h
@@ -1435,7 +1536,7 @@ export default function App() {
                 02 · Sacra Pagina &amp; Enchiridion Indulgentiarum
               </span>
               <h2 className="font-display text-3xl font-bold text-stone-900 mt-0.5">
-                30-Minute Scripture Stopwatch &amp; Catholic Indulgences
+                Scripture Study Stopwatch &amp; Catholic Indulgences
               </h2>
             </div>
             <span className="text-xs text-stone-600">
@@ -1444,12 +1545,12 @@ export default function App() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
-            {/* Left 6 Columns: Built-In 30-Minute Scripture Stopwatch */}
+            {/* Left 6 Columns: Built-In Scripture Study Stopwatch */}
             <div className="lg:col-span-6 bg-white border border-stone-300 p-6 lg:p-8 flex flex-col justify-between space-y-6">
               <div>
                 <div className="flex items-center justify-between text-xs text-stone-600 pb-3 border-b border-stone-200">
-                  <span className="uppercase tracking-widest font-semibold text-[#14532D]">
-                    Lectio Divina Timer
+                  <span className="font-semibold text-[#14532D]">
+                    Scripture Study Stopwatch
                   </span>
                   <span className="font-mono-tabular">
                     Target: &gt; 30:00 for Plenary Indulgence
@@ -1459,19 +1560,35 @@ export default function App() {
                 {/* High-Contrast Instrument Display */}
                 <div className="mt-5 bg-[#1C1917] text-[#FBF9F5] p-6 border border-stone-800">
                   <div className="flex items-center justify-between text-xs text-[#D6CEBE]">
-                    <span>ELAPSED SCRIPTURE READING TIME</span>
+                    <span className="font-semibold text-[#FBF9F5]">Scripture Study Stopwatch</span>
                     <span>
-                      {stopwatchMs >= PLENARY_TARGET_SECONDS * 1000 || hasMet30MinScriptureGoal
-                        ? '30-MINUTE PLENARY THRESHOLD EXCEEDED'
+                      {stopwatchMs >= PLENARY_TARGET_SECONDS * 1000
+                        ? `✓ 30:00 EXCEEDED (+${formatStopwatch(
+                            stopwatchMs - PLENARY_TARGET_SECONDS * 1000
+                          )} EXTRA · STILL RUNNING)`
                         : `${Math.max(
                             0,
                             Math.ceil((PLENARY_TARGET_SECONDS * 1000 - stopwatchMs) / 60000)
-                          )} MIN REMAINING TO 30:00`}
+                          )} MIN TO 30:00 (CONTINUES PAST 30M)`}
                     </span>
                   </div>
 
-                  <div className="font-mono-tabular text-5xl sm:text-6xl font-bold tracking-tight text-white my-4">
-                    {formatStopwatch(stopwatchMs)}
+                  <div className="my-4 flex flex-wrap items-baseline gap-4">
+                    <div
+                      className={`font-mono-tabular text-5xl sm:text-6xl font-bold tracking-tight ${
+                        stopwatchMs >= PLENARY_TARGET_SECONDS * 1000
+                          ? 'text-[#4ADE80]'
+                          : 'text-white'
+                      }`}
+                    >
+                      {formatStopwatch(stopwatchMs)}
+                    </div>
+
+                    {!isStopwatchRunning && stoppedDateLabel && (
+                      <span className="font-mono-tabular text-sm sm:text-base font-semibold text-amber-300 bg-stone-800/90 px-2.5 py-1 border border-stone-700">
+                        {stoppedDateLabel}
+                      </span>
+                    )}
                   </div>
 
                   {/* Progress Bar toward 30:00 */}
@@ -1491,7 +1608,7 @@ export default function App() {
                   <div className="mt-5 flex flex-wrap items-center gap-2.5">
                     <button
                       type="button"
-                      onClick={() => setIsStopwatchRunning((r) => !r)}
+                      onClick={handleToggleStopwatch}
                       className={`px-4 py-2 text-xs font-semibold flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                         isStopwatchRunning
                           ? 'bg-amber-600 text-white hover:bg-amber-700'
@@ -1500,11 +1617,12 @@ export default function App() {
                     >
                       {isStopwatchRunning ? (
                         <>
-                          <Pause className="w-3.5 h-3.5" /> Pause Reading
+                          <Pause className="w-3.5 h-3.5" /> Stop Stopwatch
                         </>
                       ) : (
                         <>
-                          <Play className="w-3.5 h-3.5" /> Start Reading Timer
+                          <Play className="w-3.5 h-3.5" />{' '}
+                          {stopwatchMs > 0 ? 'Resume Stopwatch' : 'Start Stopwatch'}
                         </>
                       )}
                     </button>
@@ -1533,14 +1651,21 @@ export default function App() {
 
                     <button
                       type="button"
-                      onClick={() => {
-                        setIsStopwatchRunning(false);
-                        setStopwatchMs(0);
-                        setChimePlayedFor30Min(false);
-                      }}
+                      onClick={handleResetStopwatch}
                       className="px-3 py-2 text-xs font-medium border border-stone-700 text-stone-300 hover:bg-stone-800 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                     >
                       Reset
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={toggleFloatingTaskbarStopwatch}
+                      className="px-3 py-2 text-xs font-semibold bg-[#9A3412] text-white hover:bg-[#7C2D12] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                      title="Open Scripture Study Stopwatch"
+                    >
+                      {isFloatingMiniOpen
+                        ? 'Close Scripture Study Stopwatch'
+                        : 'Scripture Study Stopwatch'}
                     </button>
                   </div>
                 </div>
@@ -2511,6 +2636,170 @@ export default function App() {
         </section>
       </main>
 
+      {/* PINNED / DRAGGABLE FLOATING MINI-STOPWATCH WIDGET */}
+      {isFloatingMiniOpen && (
+        <aside
+          ref={floatingMiniRef}
+          aria-label="Scripture Study Stopwatch"
+          style={
+            floatingMiniPos
+              ? { left: `${floatingMiniPos.x}px`, top: `${floatingMiniPos.y}px` }
+              : { right: '16px', bottom: '16px' }
+          }
+          className="fixed z-50 w-80 bg-[#1C1917] text-[#FBF9F5] shadow-2xl select-none"
+        >
+          {/* Draggable Titlebar */}
+          <div
+            onPointerDown={handleMiniTitlebarPointerDown}
+            title="Drag anywhere on the screen"
+            className={`flex items-center justify-between px-3.5 py-2 bg-[#292524] border-b border-stone-700 touch-none ${
+              isDraggingMini ? 'cursor-grabbing' : 'cursor-grab'
+            }`}
+          >
+            <div className="flex items-center">
+              <span className="text-xs font-semibold tracking-wide text-stone-100">
+                Scripture Study Stopwatch
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              {floatingMiniPos && (
+                <button
+                  type="button"
+                  onClick={() => setFloatingMiniPos(null)}
+                  className="px-1.5 py-0.5 text-[10px] text-stone-400 hover:text-white hover:bg-stone-700 cursor-pointer"
+                  title="Snap back to bottom-right corner"
+                >
+                  ↘
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setIsFloatingMiniMinimized((prev) => !prev)}
+                className="px-1.5 py-0.5 text-[11px] text-stone-300 hover:text-white hover:bg-stone-700 cursor-pointer"
+                title={isFloatingMiniMinimized ? 'Expand stopwatch' : 'Dock compact strip'}
+              >
+                {isFloatingMiniMinimized ? '▲' : '—'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsFloatingMiniOpen(false)}
+                className="px-1.5 py-0.5 text-[11px] text-stone-300 hover:text-white hover:bg-[#9A3412] cursor-pointer"
+                title="Close floating stopwatch"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+
+          {isFloatingMiniMinimized ? (
+            <div className="px-3.5 py-2.5 flex items-center justify-between gap-2">
+              <div className="flex items-baseline gap-2 min-w-0">
+                <span
+                  className={`font-mono-tabular text-2xl font-bold shrink-0 ${
+                    stopwatchMs >= PLENARY_TARGET_SECONDS * 1000 ? 'text-emerald-400' : 'text-white'
+                  }`}
+                >
+                  {formatStopwatch(stopwatchMs)}
+                </span>
+                {!isStopwatchRunning && stoppedDateLabel && (
+                  <span className="font-mono-tabular text-xs font-medium text-amber-300 truncate">
+                    {stoppedDateLabel}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleToggleStopwatch}
+                  className={`px-2.5 py-1 text-xs font-semibold cursor-pointer ${
+                    isStopwatchRunning
+                      ? 'bg-amber-600 text-white hover:bg-amber-500'
+                      : 'bg-emerald-600 text-white hover:bg-emerald-500'
+                  }`}
+                >
+                  {isStopwatchRunning ? 'Stop' : 'Start'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResetStopwatch}
+                  className="px-2 py-1 text-xs bg-stone-800 text-stone-200 hover:bg-stone-700 cursor-pointer"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="p-4 space-y-3">
+              <div className="flex items-baseline justify-between gap-2">
+                <div className="flex items-baseline gap-2.5 flex-wrap">
+                  <div
+                    className={`font-mono-tabular text-4xl font-bold tracking-tight ${
+                      stopwatchMs >= PLENARY_TARGET_SECONDS * 1000
+                        ? 'text-emerald-400'
+                        : 'text-white'
+                    }`}
+                  >
+                    {formatStopwatch(stopwatchMs)}
+                  </div>
+                  {!isStopwatchRunning && stoppedDateLabel && (
+                    <span className="font-mono-tabular text-xs font-semibold text-amber-300 bg-stone-800 px-2 py-0.5 border border-stone-700">
+                      {stoppedDateLabel}
+                    </span>
+                  )}
+                </div>
+                <span className="text-[11px] text-stone-400 shrink-0">
+                  {stopwatchMs >= PLENARY_TARGET_SECONDS * 1000
+                    ? `✓ +${formatStopwatch(stopwatchMs - PLENARY_TARGET_SECONDS * 1000)}`
+                    : `${Math.min(
+                        100,
+                        Math.round((stopwatchMs / (PLENARY_TARGET_SECONDS * 1000)) * 100)
+                      )}% of 30m`}
+                </span>
+              </div>
+
+              {/* Progress Bar */}
+              <div className="w-full h-2 bg-stone-800 overflow-hidden">
+                <div
+                  className="h-full bg-emerald-500 transition-all duration-300"
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      (stopwatchMs / (PLENARY_TARGET_SECONDS * 1000)) * 100
+                    )}%`,
+                  }}
+                />
+              </div>
+
+              {/* Controls: Stop/Start and Reset */}
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleToggleStopwatch}
+                  className={`flex-1 px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer ${
+                    isStopwatchRunning
+                      ? 'bg-amber-600 text-white hover:bg-amber-500'
+                      : 'bg-emerald-600 text-white hover:bg-emerald-500'
+                  }`}
+                >
+                  {isStopwatchRunning
+                    ? '⏸ Stop'
+                    : stopwatchMs > 0
+                    ? '▶ Resume'
+                    : '▶ Start'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResetStopwatch}
+                  className="px-4 py-1.5 text-xs font-medium border border-stone-700 text-stone-300 hover:bg-stone-800 cursor-pointer"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+          )}
+        </aside>
+      )}
+
       {/* QUIET EDITORIAL WEBSITE FOOTER */}
       <footer className="mt-16 border-t border-stone-300 bg-[#F4EFE6] px-6 lg:px-12 py-8 text-xs text-stone-600">
         <div className="max-w-[1360px] mx-auto flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -2526,7 +2815,7 @@ export default function App() {
             </a>
             <span aria-hidden="true">·</span>
             <a href="#scripture" className="hover:underline">
-              30-Minute Scripture Stopwatch
+              Scripture Study Stopwatch
             </a>
             <span aria-hidden="true">·</span>
             <a href="#prayers" className="hover:underline">
